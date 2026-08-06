@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Elasticsearch, From Scratch — An Interactive Visualizer</title>
+
+<!-- Tailwind CDN (utility classes only, no build step required) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<style>
+  /* A handful of things Tailwind's CDN build can't express as utilities alone. */
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .font-mono-token {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  /* Custom scrollbars so wide tables don't look broken inside their containers */
+  .styled-scroll::-webkit-scrollbar { height: 10px; width: 10px; }
+  .styled-scroll::-webkit-scrollbar-track { background: #0f172a; }
+  .styled-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 6px; }
+  .styled-scroll::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+  /* Pipeline stage arrow connector */
+  .stage-arrow::after {
+    content: "→";
+    color: #475569;
+    font-size: 1.5rem;
+    display: block;
+    text-align: center;
+    line-height: 1;
+  }
+  @media (max-width: 1023px) {
+    .stage-arrow::after { content: "↓"; }
+  }
+
+  /* Token chip base */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    margin: 0.15rem;
+    white-space: nowrap;
+  }
+  .chip-strike { text-decoration: line-through; opacity: 0.45; }
+
+  mark {
+    background: #fde047;
+    color: #1e293b;
+    border-radius: 0.2rem;
+    padding: 0 0.15rem;
+  }
+
+  details > summary { cursor: pointer; }
+  details > summary::-webkit-details-marker { display: none; }
+  .caret { transition: transform 0.15s ease; }
+  details[open] .caret { transform: rotate(90deg); }
+
+  .fade-in { animation: fadeIn 0.25s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: translateY(0);} }
+</style>
+</head>
+
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+
+<!-- ============================== HEADER ============================== -->
+<header class="border-b border-slate-800 bg-slate-900/60 sticky top-0 z-30 backdrop-blur">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
+    <div>
+      <h1 class="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+        Elasticsearch, From Scratch
+      </h1>
+      <p class="text-xs sm:text-sm text-slate-400 mt-0.5">
+        An interactive teardown of text analysis, the inverted index, and relevance scoring — no server, no dependencies beyond this page.
+      </p>
+    </div>
+    <nav class="hidden md:flex gap-1 text-xs font-medium">
+      <a href="#docs" class="px-3 py-1.5 rounded-md hover:bg-slate-800 text-slate-300">1. Documents</a>
+      <a href="#pipeline" class="px-3 py-1.5 rounded-md hover:bg-slate-800 text-slate-300">2. Analysis Pipeline</a>
+      <a href="#index" class="px-3 py-1.5 rounded-md hover:bg-slate-800 text-slate-300">3. Inverted Index</a>
+      <a href="#query" class="px-3 py-1.5 rounded-md hover:bg-slate-800 text-slate-300">4. Query &amp; Scoring</a>
+      <a href="#results" class="px-3 py-1.5 rounded-md hover:bg-slate-800 text-slate-300">5. Results</a>
+    </nav>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-14">
+
+  <!-- ========================= SECTION 1: DOCUMENTS ========================= -->
+  <section id="docs" class="scroll-mt-20">
+    <h2 class="text-lg font-semibold text-white mb-1">1 · Document Ingestion</h2>
+    <p class="text-sm text-slate-400 mb-4 max-w-3xl">
+      Elasticsearch is a <em>document store</em> before it is anything else. Each document you add below gets a numeric
+      ID and is queued for analysis. Four samples are preloaded so the rest of the page works immediately — edit,
+      delete, or add your own to see everything downstream recompute live.
+    </p>
+
+    <div class="grid lg:grid-cols-3 gap-4">
+      <!-- Add document form -->
+      <div class="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-xl p-4 h-fit">
+        <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Add a document</label>
+        <textarea id="new-doc-text" rows="4"
+          class="w-full mt-2 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/60"
+          placeholder="Type or paste a sentence or paragraph..."></textarea>
+        <div class="flex gap-2 mt-3">
+          <button id="add-doc-btn"
+            class="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold text-sm rounded-lg py-2 transition">
+            + Add Document
+          </button>
+          <button id="reset-doc-btn" title="Restore the 4 sample documents"
+            class="px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm rounded-lg py-2 transition">
+            Reset Samples
+          </button>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-2">Adding, editing, or deleting a document instantly rebuilds the index below.</p>
+      </div>
+
+      <!-- Document list -->
+      <div id="doc-list" class="lg:col-span-2 grid sm:grid-cols-2 gap-3"></div>
+    </div>
+  </section>
+
+  <!-- ========================= SECTION 2: PIPELINE ========================= -->
+  <section id="pipeline" class="scroll-mt-20">
+    <h2 class="text-lg font-semibold text-white mb-1">2 · The Text Analysis Pipeline</h2>
+    <p class="text-sm text-slate-400 mb-4 max-w-3xl">
+      Before a document's text becomes searchable, an <strong>analyzer</strong> tears it apart: lowercasing,
+      splitting into tokens, discarding low-information "stop words", and reducing words to a crude root
+      (stemming). Pick a document to watch it happen stage by stage.
+    </p>
+
+    <div class="flex items-center gap-3 mb-4">
+      <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Document</label>
+      <select id="pipeline-doc-select"
+        class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/60"></select>
+    </div>
+
+    <div id="pipeline-stages" class="grid lg:grid-cols-5 gap-3 items-start"></div>
+  </section>
+
+  <!-- ========================= SECTION 3: INVERTED INDEX ========================= -->
+  <section id="index" class="scroll-mt-20">
+    <h2 class="text-lg font-semibold text-white mb-1">3 · The Inverted Index</h2>
+    <p class="text-sm text-slate-400 mb-4 max-w-3xl">
+      This is the data structure that makes search fast: instead of scanning every document for a word, Elasticsearch
+      looks the word up once and gets back the exact list of documents (and how often it appears in each). Every
+      stemmed term produced by the pipeline above becomes one row here.
+    </p>
+
+    <div class="flex flex-wrap items-center gap-3 mb-3">
+      <input id="index-filter" type="text" placeholder="Filter terms…"
+        class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-amber-500/60" />
+      <span id="index-stats" class="text-xs text-slate-500"></span>
+    </div>
+
+    <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+      <div class="overflow-x-auto styled-scroll">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-800/70 text-slate-300 text-xs uppercase tracking-wide">
+            <tr>
+              <th class="text-left px-4 py-2.5 font-semibold">Term</th>
+              <th class="text-left px-4 py-2.5 font-semibold">Posting List — Doc (TF)</th>
+              <th class="text-left px-4 py-2.5 font-semibold">Document Frequency (DF)</th>
+              <th class="text-left px-4 py-2.5 font-semibold">BM25 IDF <span class="normal-case font-normal text-slate-500">(current corpus)</span></th>
+            </tr>
+          </thead>
+          <tbody id="index-table-body" class="divide-y divide-slate-800"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================= SECTION 4: QUERY ENGINE ========================= -->
+  <section id="query" class="scroll-mt-20">
+    <h2 class="text-lg font-semibold text-white mb-1">4 · Query Engine &amp; Relevance Scoring</h2>
+    <p class="text-sm text-slate-400 mb-4 max-w-3xl">
+      A search query is analyzed with the <em>exact same pipeline</em> as documents, then matched against the
+      inverted index. <code class="font-mono-token text-amber-300">AND</code> requires every query term to be present;
+      <code class="font-mono-token text-amber-300">OR</code> accepts documents matching any of them. The scoring model
+      decides how those matches turn into a ranked number.
+    </p>
+
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4">
+      <div class="flex flex-col lg:flex-row gap-3 lg:items-end">
+        <div class="flex-1">
+          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Search query</label>
+          <input id="query-input" type="text" placeholder="e.g. distributed search index"
+            class="w-full mt-1.5 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/60" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Match mode</label>
+          <div class="mt-1.5 flex rounded-lg overflow-hidden border border-slate-700 w-fit">
+            <button data-mode="OR" class="mode-btn px-3.5 py-2 text-sm font-medium transition">OR</button>
+            <button data-mode="AND" class="mode-btn px-3.5 py-2 text-sm font-medium transition">AND</button>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Scoring model</label>
+          <div class="mt-1.5 flex rounded-lg overflow-hidden border border-slate-700 w-fit">
+            <button data-score="bm25" class="score-btn px-3.5 py-2 text-sm font-medium transition">BM25</button>
+            <button data-score="tfidf" class="score-btn px-3.5 py-2 text-sm font-medium transition">TF-IDF</button>
+          </div>
+        </div>
+        <button id="search-btn" class="bg-amber-500 hover:bg-amber-400 text-slate-900 font-semibold text-sm rounded-lg px-5 py-2.5 transition">
+          Search
+        </button>
+      </div>
+
+      <!-- BM25 tunables -->
+      <div id="bm25-params" class="flex flex-wrap gap-6 pt-3 border-t border-slate-800">
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-400 w-32">k1 (term saturation) <span id="k1-val" class="text-amber-300 font-mono-token"></span></label>
+          <input id="k1-slider" type="range" min="0" max="3" step="0.1" value="1.2" class="w-40 accent-amber-500" />
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-400 w-40">b (length normalization) <span id="b-val" class="text-amber-300 font-mono-token"></span></label>
+          <input id="b-slider" type="range" min="0" max="1" step="0.05" value="0.75" class="w-40 accent-amber-500" />
+        </div>
+      </div>
+
+      <!-- Analyzed query preview -->
+      <div id="query-analyzed" class="text-xs text-slate-500 pt-1 hidden"></div>
+    </div>
+  </section>
+
+  <!-- ========================= SECTION 5: RESULTS ========================= -->
+  <section id="results" class="scroll-mt-20">
+    <h2 class="text-lg font-semibold text-white mb-1">5 · Ranked Results &amp; Score Breakdown</h2>
+    <p class="text-sm text-slate-400 mb-4 max-w-3xl">
+      Documents are ranked by score, highest first. Expand a result to see, term by term, exactly how its score was
+      computed — the same numbers Elasticsearch's <code class="font-mono-token text-amber-300">explain</code> API
+      would show you.
+    </p>
+    <div id="results-container" class="space-y-3"></div>
+  </section>
+
+  <footer class="text-center text-xs text-slate-600 pt-6 pb-2 border-t border-slate-900">
+    Built as a self-contained teaching tool. Stemming and stop-word logic are simplified for clarity, not
+    production-grade linguistics — real Elasticsearch analyzers (Porter stemmer, language-specific stop lists,
+    ICU normalization) are considerably more sophisticated.
+  </footer>
+</main>
+
+<script>
+/* =====================================================================================
+   ELASTICSEARCH, FROM SCRATCH — core engine
+   ---------------------------------------------------------------------------------
+   Everything below is plain, dependency-free JavaScript. It's organized in four
+   layers, in the order data actually flows through a real search engine:
+
+     1. TEXT ANALYSIS      — tokenize / lowercase / stop-word removal / stemming
+     2. INDEXING           — turning analyzed documents into an inverted index
+     3. QUERY & SCORING    — BM25 and classic TF-IDF (Lucene "ClassicSimilarity")
+     4. RENDERING          — DOM wiring for the 5 sections above
+
+   State lives in a handful of top-level variables; every mutation calls
+   renderAll() (or a narrower render function) so the UI never gets out of sync
+   with the model. There is no framework here on purpose — the goal is that you
+   can read this file top to bottom and see exactly how a search engine thinks.
+===================================================================================== */
+
+/* --------------------------------- 1. TEXT ANALYSIS --------------------------------- */
+
+// A deliberately small, common-English stop-word list. Real analyzers ship
+// hundreds of these, per language, and let you swap the list entirely.
+const STOPWORDS = new Set([
+  "a","an","the","and","or","but","is","are","was","were","be","been","being",
+  "to","of","in","on","at","for","with","as","by","from","that","this","these",
+  "those","it","its","it's","not","no","so","such","than","then","too","very",
+  "can","will","just","do","does","did","have","has","had","i","you","he","she",
+  "we","they","them","his","her","their","our","your","if","into","about","up",
+  "down","out","over","under","again","further","once","here","there","when",
+  "where","why","how","all","any","both","each","few","more","most","other",
+  "some","only","own","same","s","t","also","which","who","whom","what"
+]);
+
+/**
+ * A tiny suffix-stripping stemmer — NOT a real Porter stemmer, but it
+ * demonstrates the same idea: collapse inflected forms ("running", "runs",
+ * "ran"-adjacent "runner") toward a shared root so "run" and "running" hit
+ * the same inverted-index row. Order of rules matters (longest suffix first).
+ */
+function stem(word) {
+  let w = word;
+  if (w.length < 4) return w; // too short to safely strip anything
+
+  // Plurals: "queries" -> "query"
+  if (w.endsWith("ies") && w.length > 4) return w.slice(0, -3) + "y";
+  // "boxes" -> "box"
+  if (w.endsWith("es") && w.length > 4) return w.slice(0, -2);
+  // "cats" -> "cat" (but not "ss" endings like "process")
+  if (w.endsWith("s") && !w.endsWith("ss") && w.length > 3) w = w.slice(0, -1);
+
+  // "running" -> "runn" -> "run" (de-double the trailing consonant)
+  if (w.endsWith("ing") && w.length > 5) {
+    let stripped = w.slice(0, -3);
+    if (/([a-z])\1$/.test(stripped)) stripped = stripped.slice(0, -1);
+    return stripped;
+  }
+  // "replicated" -> "replicat" -> "replicate"-ish; "scored" -> "score"
+  if (w.endsWith("ed") && w.length > 4) {
+    let stripped = w.slice(0, -2);
+    if (/([a-z])\1$/.test(stripped)) stripped = stripped.slice(0, -1);
+    return stripped;
+  }
+  // "quickly" -> "quick"
+  if (w.endsWith("ly") && w.length > 4) return w.slice(0, -2);
+
+  return w;
+}
+
+/**
+ * Run one piece of text through the full analysis pipeline and return every
+ * intermediate stage, so the UI can show the transformation, not just the
+ * final result.
+ *
+ * Returned shape:
+ *   {
+ *     raw:      original string
+ *     lower:    lowercased string
+ *     tokens:   [{ token, isStopword }]   -- after tokenizing the lowercased text
+ *     kept:     [ token, ... ]            -- tokens with stop-words removed
+ *     stemmed:  [{ token, stem, changed }]-- final indexed terms
+ *   }
+ */
+function analyze(text) {
+  const raw = text;
+  const lower = text.toLowerCase();
+
+  // Tokenize: pull out runs of letters/digits/apostrophes ("don't" stays whole).
+  const rawTokens = lower.match(/[a-z0-9']+/g) || [];
+  const tokens = rawTokens.map(t => ({ token: t, isStopword: STOPWORDS.has(t) }));
+
+  const kept = tokens.filter(t => !t.isStopword).map(t => t.token);
+  const stemmed = kept.map(t => {
+    const s = stem(t);
+    return { token: t, stem: s, changed: s !== t };
+  });
+
+  return { raw, lower, tokens, kept, stemmed };
+}
+
+/* ------------------------------------ 2. INDEXING ------------------------------------ */
+
+/**
+ * Build the inverted index for the current document set.
+ *
+ * index: Map<term, Map<docId, termFrequency>>
+ * docLengths: Map<docId, number of indexed terms in that doc>
+ *
+ * This is intentionally the whole "engine" for storage: to find every document
+ * containing a term, you do one Map lookup (index.get(term)) instead of
+ * scanning N documents. That's the entire point of an inverted index.
+ */
+function buildIndex(documents) {
+  const index = new Map();
+  const docLengths = new Map();
+  const docAnalysis = new Map(); // docId -> analyze() result, cached for reuse (highlighting, pipeline view)
+
+  for (const doc of documents) {
+    const a = analyze(doc.text);
+    docAnalysis.set(doc.id, a);
+
+    const terms = a.stemmed.map(x => x.stem);
+    docLengths.set(doc.id, terms.length);
+
+    const tf = new Map();
+    for (const term of terms) tf.set(term, (tf.get(term) || 0) + 1);
+
+    for (const [term, freq] of tf) {
+      if (!index.has(term)) index.set(term, new Map());
+      index.get(term).set(doc.id, freq);
+    }
+  }
+
+  const totalDocs = documents.length;
+  const totalLength = [...docLengths.values()].reduce((a, b) => a + b, 0);
+  const avgDocLength = totalDocs > 0 ? totalLength / totalDocs : 0;
+
+  return { index, docLengths, docAnalysis, totalDocs, avgDocLength };
+}
+
+/* -------------------------------- 3. QUERY & SCORING -------------------------------- */
+
+/**
+ * BM25 — Elasticsearch's default similarity since version 5.0.
+ *
+ *   score(D,Q) = Σ  IDF(t) · f(t,D)·(k1+1)
+ *                     ─────────────────────────────
+ *                     f(t,D) + k1·(1 - b + b·|D|/avgdl)
+ *
+ *   IDF(t) = ln( 1 + (N - df(t) + 0.5) / (df(t) + 0.5) )
+ *
+ * k1 controls term-frequency saturation (higher = TF keeps mattering longer).
+ * b controls how much document length is penalized (0 = ignore length, 1 = full).
+ */
+function scoreBM25(docId, queryTerms, ctx, k1, b) {
+  const { index, docLengths, totalDocs, avgDocLength } = ctx;
+  const dl = docLengths.get(docId) || 0;
+  const rows = [];
+  let total = 0;
+
+  for (const term of queryTerms) {
+    const postings = index.get(term);
+    const df = postings ? postings.size : 0;
+    const freq = postings && postings.has(docId) ? postings.get(docId) : 0;
+
+    const idf = Math.log(1 + (totalDocs - df + 0.5) / (df + 0.5));
+    const numerator = freq * (k1 + 1);
+    const denominator = freq + k1 * (1 - b + b * (avgDocLength > 0 ? dl / avgDocLength : 0));
+    const contribution = denominator > 0 ? idf * (numerator / denominator) : 0;
+
+    total += contribution;
+    rows.push({ term, df, freq, idf, numerator, denominator: denominator, contribution });
+  }
+  return { total, rows, dl };
+}
+
+/**
+ * Classic TF-IDF — Lucene's original "ClassicSimilarity", ES's default before
+ * BM25 arrived. Included so you can compare the two side by side.
+ *
+ *   score(D,Q) = Σ  tf(t,D) · idf(t)²  · norm(D)
+ *
+ *   tf(t,D)  = sqrt( freq(t,D) )
+ *   idf(t)   = 1 + ln( N / (df(t) + 1) )
+ *   norm(D)  = 1 / sqrt( |D| )        (field-length norm: shorter docs score higher, all else equal)
+ */
+function scoreTFIDF(docId, queryTerms, ctx) {
+  const { index, docLengths, totalDocs } = ctx;
+  const dl = docLengths.get(docId) || 0;
+  const norm = dl > 0 ? 1 / Math.sqrt(dl) : 0;
+  const rows = [];
+  let total = 0;
+
+  for (const term of queryTerms) {
+    const postings = index.get(term);
+    const df = postings ? postings.size : 0;
+    const freq = postings && postings.has(docId) ? postings.get(docId) : 0;
+
+    const idf = 1 + Math.log(totalDocs / (df + 1));
+    const tf = freq > 0 ? Math.sqrt(freq) : 0;
+    const contribution = tf * idf * idf * norm;
+
+    total += contribution;
+    rows.push({ term, df, freq, idf, tf, norm, contribution });
+  }
+  return { total, rows, dl };
+}
+
+/**
+ * Run a search: analyze the query with the same pipeline as documents, filter
+ * candidate documents by AND/OR match mode, score each candidate, and return
+ * them sorted best-first.
+ */
+function runQuery(rawQuery, documents, ctx, mode, scoring, k1, b) {
+  const analyzed = analyze(rawQuery);
+  const queryTerms = [...new Set(analyzed.stemmed.map(x => x.stem))]; // unique stems, order preserved by Set insertion
+
+  if (queryTerms.length === 0) return { queryTerms, results: [] };
+
+  // Candidate doc IDs, per AND / OR semantics.
+  let candidateIds;
+  if (mode === "AND") {
+    candidateIds = null;
+    for (const term of queryTerms) {
+      const postings = ctx.index.get(term);
+      const ids = postings ? new Set(postings.keys()) : new Set();
+      candidateIds = candidateIds === null ? ids : new Set([...candidateIds].filter(id => ids.has(id)));
+      if (candidateIds.size === 0) break;
+    }
+    candidateIds = candidateIds || new Set();
+  } else {
+    candidateIds = new Set();
+    for (const term of queryTerms) {
+      const postings = ctx.index.get(term);
+      if (postings) for (const id of postings.keys()) candidateIds.add(id);
+    }
+  }
+
+  const results = [];
+  for (const id of candidateIds) {
+    const doc = documents.find(d => d.id === id);
+    if (!doc) continue;
+    const { total, rows, dl } = scoring === "bm25"
+      ? scoreBM25(id, queryTerms, ctx, k1, b)
+      : scoreTFIDF(id, queryTerms, ctx);
+    results.push({ doc, score: total, rows, dl, matchedCount: rows.filter(r => r.freq > 0).length });
+  }
+
+  results.sort((a, b) => b.score - a.score || a.doc.id - b.doc.id);
+  return { queryTerms, results };
+}
+
+/* ------------------------------------ APP STATE ------------------------------------ */
+
+const SAMPLE_DOCS = [
+  "Elasticsearch is a distributed search and analytics engine built on top of Apache Lucene.",
+  "The inverted index maps every term to the documents that contain it, which is what makes full text search fast.",
+  "Relevance scoring algorithms such as TF-IDF and BM25 rank documents using term frequency, inverse document frequency, and document length normalization.",
+  "Distributed systems replicate and shard data across multiple nodes to provide scalability and fault tolerance."
+];
+
+let documents = [];   // [{ id, text }]
+let nextId = 1;
+let ctx = null;       // output of buildIndex(): { index, docLengths, docAnalysis, totalDocs, avgDocLength }
+let pipelineDocId = null;
+let matchMode = "OR";
+let scoringModel = "bm25";
+let lastQueryState = null; // { queryTerms, results } — kept so slider tweaks re-score live
+
+function loadSamples() {
+  documents = SAMPLE_DOCS.map(text => ({ id: nextId++, text }));
+  pipelineDocId = documents[0].id;
+}
+
+function addDocument(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  documents.push({ id: nextId++, text: trimmed });
+  pipelineDocId = documents[documents.length - 1].id;
+}
+
+function deleteDocument(id) {
+  documents = documents.filter(d => d.id !== id);
+  if (pipelineDocId === id) pipelineDocId = documents[0] ? documents[0].id : null;
+}
+
+/* ------------------------------------ RENDERING ------------------------------------ */
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function renderAll() {
+  ctx = buildIndex(documents);
+  renderDocList();
+  renderPipelineSelect();
+  renderPipeline();
+  renderIndexTable();
+  // Re-run the last search (if any) against the freshly rebuilt index so the
+  // results panel never shows stale scores after an edit.
+  if (lastQueryState !== null) runSearchFromInput();
+  else renderResultsEmpty("Run a query above to see ranked results.");
+}
+
+/* ---- 1. Document list ---- */
+function renderDocList() {
+  const el = document.getElementById("doc-list");
+  if (documents.length === 0) {
+    el.innerHTML = `<div class="sm:col-span-2 text-sm text-slate-500 italic border border-dashed border-slate-800 rounded-xl p-6 text-center">
+      No documents. Add one, or click "Reset Samples".
+    </div>`;
+    return;
+  }
+  el.innerHTML = documents.map(doc => `
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col gap-2 fade-in">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-mono-token font-semibold text-amber-400">doc #${doc.id}</span>
+        <button data-del-id="${doc.id}" class="del-doc-btn text-slate-500 hover:text-red-400 text-xs">✕ remove</button>
+      </div>
+      <p class="text-sm text-slate-300 leading-snug line-clamp-4">${escapeHtml(doc.text)}</p>
+    </div>
+  `).join("");
+}
+
+/* ---- 2. Pipeline ---- */
+function renderPipelineSelect() {
+  const sel = document.getElementById("pipeline-doc-select");
+  if (documents.length === 0) {
+    sel.innerHTML = `<option>No documents</option>`;
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  sel.innerHTML = documents.map(d =>
+    `<option value="${d.id}" ${d.id === pipelineDocId ? "selected" : ""}>doc #${d.id} — ${escapeHtml(d.text.slice(0, 40))}${d.text.length > 40 ? "…" : ""}</option>`
+  ).join("");
+}
+
+function renderPipeline() {
+  const container = document.getElementById("pipeline-stages");
+  const doc = documents.find(d => d.id === pipelineDocId);
+  if (!doc) {
+    container.innerHTML = `<p class="text-sm text-slate-500 italic lg:col-span-5">Nothing to analyze yet.</p>`;
+    return;
+  }
+  const a = ctx.docAnalysis.get(doc.id) || analyze(doc.text);
+
+  const stageCard = (title, subtitle, bodyHtml, isLast) => `
+    <div class="flex items-center gap-2 lg:flex-col lg:contents">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex-1 min-h-[9rem]">
+        <h3 class="text-xs font-semibold text-amber-400 uppercase tracking-wide">${title}</h3>
+        <p class="text-[11px] text-slate-500 mb-2">${subtitle}</p>
+        <div class="flex flex-wrap">${bodyHtml}</div>
+      </div>
+      ${isLast ? "" : `<div class="stage-arrow px-1 hidden lg:block"></div>`}
+    </div>
+  `;
+
+  const stage1 = stageCard("① Raw Text", "Exactly what was submitted.",
+    `<p class="text-sm text-slate-300 leading-snug">${escapeHtml(a.raw)}</p>`);
+
+  const stage2 = stageCard("② Lowercasing", "\"Search\" and \"search\" must become the same token.",
+    `<p class="text-sm text-slate-300 leading-snug font-mono-token">${escapeHtml(a.lower)}</p>`);
+
+  const stage3 = stageCard("③ Tokenization", "Split on whitespace / punctuation into discrete tokens.",
+    a.tokens.map(t => `<span class="chip bg-slate-800 text-slate-300 font-mono-token">${escapeHtml(t.token)}</span>`).join(""));
+
+  const stage4 = stageCard("④ Stop-Word Removal", "Low-signal words are dropped (struck through) before indexing.",
+    a.tokens.map(t => `<span class="chip font-mono-token ${t.isStopword ? "chip-strike bg-slate-800 text-slate-500" : "bg-emerald-900/40 text-emerald-300"}">${escapeHtml(t.token)}</span>`).join(""));
+
+  const stage5 = stageCard("⑤ Stemming", "Reduce remaining words toward a shared root — this is what actually gets indexed.",
+    a.stemmed.length
+      ? a.stemmed.map(t => `<span class="chip font-mono-token bg-amber-900/30 text-amber-300" title="${t.changed ? escapeHtml(t.token) + " → " + escapeHtml(t.stem) : "unchanged"}">${escapeHtml(t.stem)}${t.changed ? `<span class="text-amber-600">·</span>` : ""}</span>`).join("")
+      : `<span class="text-xs text-slate-600 italic">No indexable terms (everything was a stop word).</span>`,
+    true);
+
+  container.innerHTML = stage1 + stage2 + stage3 + stage4 + stage5;
+}
+
+/* ---- 3. Inverted index table ---- */
+function renderIndexTable(filter = "") {
+  const body = document.getElementById("index-table-body");
+  const stats = document.getElementById("index-stats");
+  const terms = [...ctx.index.keys()].sort();
+  const f = filter.trim().toLowerCase();
+  const visible = f ? terms.filter(t => t.includes(f)) : terms;
+
+  stats.textContent = `${terms.length} unique term${terms.length === 1 ? "" : "s"} across ${ctx.totalDocs} document${ctx.totalDocs === 1 ? "" : "s"} · avg doc length ${ctx.avgDocLength.toFixed(2)} terms`;
+
+  if (visible.length === 0) {
+    body.innerHTML = `<tr><td colspan="4" class="px-4 py-6 text-center text-sm text-slate-500 italic">No matching terms.</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = visible.map(term => {
+    const postings = ctx.index.get(term);
+    const df = postings.size;
+    const idf = Math.log(1 + (ctx.totalDocs - df + 0.5) / (df + 0.5));
+    const postingChips = [...postings.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([docId, tf]) => `<span class="chip bg-slate-800 text-slate-300 font-mono-token">doc#${docId} <span class="text-amber-400">×${tf}</span></span>`)
+      .join("");
+    return `
+      <tr class="hover:bg-slate-800/40 transition">
+        <td class="px-4 py-2 font-mono-token text-amber-300 font-semibold align-top whitespace-nowrap">${escapeHtml(term)}</td>
+        <td class="px-4 py-2">${postingChips}</td>
+        <td class="px-4 py-2 align-top text-slate-300">${df} / ${ctx.totalDocs}</td>
+        <td class="px-4 py-2 align-top text-slate-400 font-mono-token">${idf.toFixed(3)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+/* ---- 4 & 5. Query + Results ---- */
+function renderResultsEmpty(message) {
+  document.getElementById("results-container").innerHTML =
+    `<p class="text-sm text-slate-500 italic border border-dashed border-slate-800 rounded-xl p-6 text-center">${escapeHtml(message)}</p>`;
+}
+
+function highlightText(rawText, queryStemSet) {
+  let result = "";
+  let lastIndex = 0;
+  const regex = /[A-Za-z0-9']+/g;
+  let m;
+  while ((m = regex.exec(rawText)) !== null) {
+    result += escapeHtml(rawText.slice(lastIndex, m.index));
+    const word = m[0];
+    const matched = queryStemSet.has(stem(word.toLowerCase()));
+    result += matched ? `<mark>${escapeHtml(word)}</mark>` : escapeHtml(word);
+    lastIndex = regex.lastIndex;
+  }
+  result += escapeHtml(rawText.slice(lastIndex));
+  return result;
+}
+
+function runSearchFromInput() {
+  const raw = document.getElementById("query-input").value;
+  if (!raw.trim()) {
+    lastQueryState = null;
+    renderResultsEmpty("Run a query above to see ranked results.");
+    document.getElementById("query-analyzed").classList.add("hidden");
+    return;
+  }
+  const k1 = parseFloat(document.getElementById("k1-slider").value);
+  const b = parseFloat(document.getElementById("b-slider").value);
+  const { queryTerms, results } = runQuery(raw, documents, ctx, matchMode, scoringModel, k1, b);
+  lastQueryState = { raw, queryTerms, results };
+
+  const analyzedEl = document.getElementById("query-analyzed");
+  analyzedEl.classList.remove("hidden");
+  analyzedEl.innerHTML = queryTerms.length
+    ? `Analyzed query terms → ${queryTerms.map(t => `<span class="chip bg-slate-800 text-amber-300 font-mono-token">${escapeHtml(t)}</span>`).join("")}`
+    : `<span class="italic">Every word in your query was removed as a stop word — nothing to search for.</span>`;
+
+  renderResults();
+}
+
+function renderResults() {
+  if (!lastQueryState) return;
+  const { queryTerms, results } = lastQueryState;
+  const container = document.getElementById("results-container");
+  const queryStemSet = new Set(queryTerms);
+
+  if (results.length === 0) {
+    renderResultsEmpty(
+      matchMode === "AND"
+        ? "No document contains ALL query terms. Try OR mode, or a different query."
+        : "No document matches any query term."
+    );
+    return;
+  }
+
+  const scoreLabel = scoringModel === "bm25" ? "BM25" : "TF-IDF";
+  const maxScore = results[0].score || 1;
+
+  container.innerHTML = results.map((r, i) => {
+    const pct = Math.max(4, Math.round((r.score / maxScore) * 100));
+    const rowsHtml = r.rows.map(row => {
+      if (scoringModel === "bm25") {
+        return `
+          <tr class="border-t border-slate-800">
+            <td class="px-3 py-1.5 font-mono-token text-amber-300">${escapeHtml(row.term)}</td>
+            <td class="px-3 py-1.5 text-slate-300">${row.freq}</td>
+            <td class="px-3 py-1.5 text-slate-300">${row.df} / ${ctx.totalDocs}</td>
+            <td class="px-3 py-1.5 text-slate-400 font-mono-token">${row.idf.toFixed(3)}</td>
+            <td class="px-3 py-1.5 text-slate-400 font-mono-token">${row.numerator.toFixed(3)} / ${row.denominator.toFixed(3)}</td>
+            <td class="px-3 py-1.5 font-semibold ${row.contribution > 0 ? "text-emerald-400" : "text-slate-600"}">${row.contribution.toFixed(3)}</td>
+          </tr>`;
+      }
+      return `
+        <tr class="border-t border-slate-800">
+          <td class="px-3 py-1.5 font-mono-token text-amber-300">${escapeHtml(row.term)}</td>
+          <td class="px-3 py-1.5 text-slate-300">${row.freq}</td>
+          <td class="px-3 py-1.5 text-slate-300">${row.df} / ${ctx.totalDocs}</td>
+          <td class="px-3 py-1.5 text-slate-400 font-mono-token">${row.idf.toFixed(3)}</td>
+          <td class="px-3 py-1.5 text-slate-400 font-mono-token">${row.tf.toFixed(3)} × ${row.norm.toFixed(3)}</td>
+          <td class="px-3 py-1.5 font-semibold ${row.contribution > 0 ? "text-emerald-400" : "text-slate-600"}">${row.contribution.toFixed(3)}</td>
+        </tr>`;
+    }).join("");
+
+    const headerCols = scoringModel === "bm25"
+      ? `<th class="px-3 py-1.5 text-left">Term</th><th class="px-3 py-1.5 text-left">f(t,D)</th><th class="px-3 py-1.5 text-left">DF</th><th class="px-3 py-1.5 text-left">IDF</th><th class="px-3 py-1.5 text-left">Num / Denom</th><th class="px-3 py-1.5 text-left">Contribution</th>`
+      : `<th class="px-3 py-1.5 text-left">Term</th><th class="px-3 py-1.5 text-left">freq</th><th class="px-3 py-1.5 text-left">DF</th><th class="px-3 py-1.5 text-left">IDF</th><th class="px-3 py-1.5 text-left">√tf × norm</th><th class="px-3 py-1.5 text-left">Contribution</th>`;
+
+    return `
+      <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden fade-in">
+        <details ${i === 0 ? "open" : ""}>
+          <summary class="flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 select-none">
+            <span class="caret text-slate-500 text-xs">▶</span>
+            <span class="text-xs font-mono-token text-amber-400 font-semibold shrink-0">doc #${r.doc.id}</span>
+            <div class="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div class="h-full bg-amber-500" style="width:${pct}%"></div>
+            </div>
+            <span class="text-sm font-semibold text-white shrink-0">${scoreLabel} ${r.score.toFixed(3)}</span>
+            <span class="text-[11px] text-slate-500 shrink-0">${r.matchedCount}/${queryTerms.length} terms matched</span>
+          </summary>
+          <div class="px-4 pb-4 space-y-3 border-t border-slate-800 pt-3">
+            <p class="text-sm text-slate-300 leading-relaxed">${highlightText(r.doc.text, queryStemSet)}</p>
+            <div class="overflow-x-auto styled-scroll">
+              <table class="w-full text-xs">
+                <thead class="text-slate-500 uppercase tracking-wide"><tr>${headerCols}</tr></thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+            </div>
+            <p class="text-[11px] text-slate-500">doc length = ${r.dl} indexed term${r.dl === 1 ? "" : "s"} · avg corpus length = ${ctx.avgDocLength.toFixed(2)}</p>
+          </div>
+        </details>
+      </div>
+    `;
+  }).join("");
+}
+
+/* ------------------------------------ EVENT WIRING ------------------------------------ */
+
+function setModeButtons() {
+  document.querySelectorAll(".mode-btn").forEach(btn => {
+    const active = btn.dataset.mode === matchMode;
+    btn.className = "mode-btn px-3.5 py-2 text-sm font-medium transition " +
+      (active ? "bg-amber-500 text-slate-900" : "bg-slate-900 text-slate-400 hover:bg-slate-800");
+  });
+}
+function setScoreButtons() {
+  document.querySelectorAll(".score-btn").forEach(btn => {
+    const active = btn.dataset.score === scoringModel;
+    btn.className = "score-btn px-3.5 py-2 text-sm font-medium transition " +
+      (active ? "bg-amber-500 text-slate-900" : "bg-slate-900 text-slate-400 hover:bg-slate-800");
+  });
+  document.getElementById("bm25-params").classList.toggle("hidden", scoringModel !== "bm25");
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  loadSamples();
+  renderAll();
+  setModeButtons();
+  setScoreButtons();
+  document.getElementById("k1-val").textContent = document.getElementById("k1-slider").value;
+  document.getElementById("b-val").textContent = document.getElementById("b-slider").value;
+
+  // -- Document management --
+  document.getElementById("add-doc-btn").addEventListener("click", () => {
+    const ta = document.getElementById("new-doc-text");
+    addDocument(ta.value);
+    ta.value = "";
+    renderAll();
+  });
+
+  document.getElementById("reset-doc-btn").addEventListener("click", () => {
+    loadSamples();
+    renderAll();
+  });
+
+  document.getElementById("doc-list").addEventListener("click", (e) => {
+    const btn = e.target.closest(".del-doc-btn");
+    if (!btn) return;
+    deleteDocument(parseInt(btn.dataset.delId, 10));
+    renderAll();
+  });
+
+  // -- Pipeline selector --
+  document.getElementById("pipeline-doc-select").addEventListener("change", (e) => {
+    pipelineDocId = parseInt(e.target.value, 10);
+    renderPipeline();
+  });
+
+  // -- Index filter --
+  document.getElementById("index-filter").addEventListener("input", (e) => {
+    renderIndexTable(e.target.value);
+  });
+
+  // -- Query controls --
+  document.querySelectorAll(".mode-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      matchMode = btn.dataset.mode;
+      setModeButtons();
+      if (lastQueryState) runSearchFromInput();
+    });
+  });
+  document.querySelectorAll(".score-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      scoringModel = btn.dataset.score;
+      setScoreButtons();
+      if (lastQueryState) runSearchFromInput();
+    });
+  });
+
+  document.getElementById("k1-slider").addEventListener("input", (e) => {
+    document.getElementById("k1-val").textContent = e.target.value;
+    if (lastQueryState && scoringModel === "bm25") runSearchFromInput();
+  });
+  document.getElementById("b-slider").addEventListener("input", (e) => {
+    document.getElementById("b-val").textContent = e.target.value;
+    if (lastQueryState && scoringModel === "bm25") runSearchFromInput();
+  });
+
+  document.getElementById("search-btn").addEventListener("click", runSearchFromInput);
+  document.getElementById("query-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") runSearchFromInput();
+  });
+
+  // Kick off with a demo query so the page isn't empty on first load.
+  document.getElementById("query-input").value = "distributed search";
+  runSearchFromInput();
+});
+</script>
+</body>
+</html>
