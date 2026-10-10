@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CRM Copilot</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --border: #e3e6ec;
+  --accent: #3559e0; --accent-soft: #e9eefc; --warn: #b54708; --warn-soft: #fef0e6;
+  --err: #c0362c; --ok: #1a7f4b; --code: #f1f3f6; --user: #3559e0; --user-text: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1a1e26; --text: #e6e8ec; --muted: #98a1b2; --border: #2a303b;
+    --accent: #7c9cff; --accent-soft: #232c45; --warn: #f5a35c; --warn-soft: #3a2a1c;
+    --err: #ff7b72; --ok: #4ac286; --code: #232833; --user: #3b5bdb; --user-text: #fff;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.app { display: grid; grid-template-columns: 340px 1fr; height: 100vh; }
+aside { border-right: 1px solid var(--border); background: var(--panel); overflow-y: auto; padding: 18px; }
+main { display: flex; flex-direction: column; min-width: 0; }
+h1 { font-size: 17px; margin: 0 0 2px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 0 8px; }
+.sub { color: var(--muted); font-size: 12px; }
+.kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.kpi { border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+.kpi b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+.kpi span { color: var(--muted); font-size: 12px; }
+.bar-row { display: grid; grid-template-columns: 96px 1fr 64px; gap: 8px; align-items: center; font-size: 12px; margin: 4px 0; }
+.bar { height: 10px; background: var(--accent); border-radius: 3px; min-width: 2px; }
+.bar-row .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.list li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.list li span:last-child { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+header.bar-top { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+header .spacer { flex: 1; }
+.pill { font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+label.toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+button { font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+#chat { flex: 1; overflow-y: auto; padding: 20px; }
+.msg { max-width: 860px; margin: 0 auto 16px; }
+.msg.user .bubble { background: var(--user); color: var(--user-text); margin-left: auto; width: fit-content; max-width: 80%; border-radius: 14px 14px 4px 14px; padding: 10px 14px; white-space: pre-wrap; }
+.msg.assistant .bubble { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px 16px; }
+.bubble p { margin: 0 0 8px; } .bubble p:last-child { margin-bottom: 0; }
+.bubble table { border-collapse: collapse; margin: 8px 0; font-size: 13px; display: block; overflow-x: auto; }
+.bubble th, .bubble td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.bubble code { background: var(--code); padding: 1px 4px; border-radius: 4px; font-size: 12.5px; }
+.bubble ul, .bubble ol { margin: 4px 0 8px; padding-left: 22px; }
+.bubble h3, .bubble h4 { margin: 10px 0 6px; font-size: 14px; }
+details.trace { margin-bottom: 8px; font-size: 12.5px; color: var(--muted); }
+details.trace summary { cursor: pointer; user-select: none; }
+.step { border-left: 2px solid var(--border); padding: 2px 0 2px 10px; margin: 6px 0 6px 4px; }
+.step.tool { border-color: var(--accent); }
+.step.write { border-color: var(--warn); }
+.step.err { border-color: var(--err); color: var(--err); }
+.step pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow: auto; background: var(--code); padding: 6px 8px; border-radius: 6px; color: var(--text); }
+.notice { color: var(--warn); font-size: 13px; }
+.error { color: var(--err); }
+.typing { color: var(--muted); font-size: 13px; }
+.suggestions { max-width: 860px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 8px; }
+.suggestions button { font-size: 13px; border-radius: 999px; }
+form { border-top: 1px solid var(--border); background: var(--panel); padding: 12px 20px; }
+form .row { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; }
+textarea { flex: 1; resize: none; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-height: 44px; max-height: 160px; }
+textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+form button[type=submit] { background: var(--accent); color: #fff; border-color: var(--accent); }
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; height: auto; }
+  aside { border-right: 0; border-bottom: 1px solid var(--border); max-height: none; }
+  main { height: 100vh; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>CRM Copilot</h1>
+    <div class="sub" id="meta">connecting…</div>
+    <h2>Open pipeline</h2>
+    <div class="kpis" id="kpis"></div>
+    <h2>Pipeline by stage</h2>
+    <div id="stages"></div>
+    <h2>Closing in 30 days</h2>
+    <ul class="list" id="closing"></ul>
+    <h2>At-risk customers (health &lt; 60)</h2>
+    <ul class="list" id="risk"></ul>
+  </aside>
+  <main>
+    <header class="bar-top">
+      <span class="pill" id="userPill">Priya Shah</span>
+      <span class="spacer"></span>
+      <label class="toggle" title="When off, the agent can read but any write is declined">
+        <input type="checkbox" id="allowWrites"> Allow write actions
+      </label>
+      <button id="resetBtn" type="button">New chat</button>
+    </header>
+    <div id="chat">
+      <div class="suggestions" id="suggestions"></div>
+    </div>
+    <form id="form">
+      <div class="row">
+        <textarea id="input" rows="1" placeholder="Ask about accounts, deals, leads, policies… (Enter to send)"></textarea>
+        <button type="submit">Send</button>
+      </div>
+    </form>
+  </main>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt$ = (n) => "$" + Math.round(n || 0).toLocaleString("en-US");
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let sessionId = null, busy = false;
+
+const SUGGESTIONS = [
+  "Give me a pipeline summary by stage and flag anything risky",
+  "Which deals are closing in the next 30 days?",
+  "Prepare me for a meeting with Globex Financial",
+  "Which customers are at risk before renewal and why?",
+  "Who has raised data residency or security concerns?",
+  "Globex wants 25% off a 2-year deal. Who needs to approve that?",
+  "Show my top qualified leads and suggest which to convert",
+  "Which open deals are past due or stalled for 21+ days?",
+];
+
+// --- tiny markdown renderer (headings, bold, italics, code, lists, tables) ---
+function inline(s) {
+  return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+}
+function md(src) {
+  const lines = src.replace(/\r/g, "").split("\n");
+  let html = "", i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+      const row = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      html += "<table><thead><tr>" + row(line).map((c) => `<th>${inline(c)}</th>`).join("") + "</tr></thead><tbody>";
+      i += 2;
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+        html += "<tr>" + row(lines[i]).map((c) => `<td>${inline(c)}</td>`).join("") + "</tr>"; i++;
+      }
+      html += "</tbody></table>"; continue;
+    }
+    if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
+      const ordered = /^\s*\d+\./.test(line);
+      html += ordered ? "<ol>" : "<ul>";
+      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
+        html += "<li>" + inline(lines[i].replace(/^\s*([-*]|\d+\.)\s+/, "")) + "</li>"; i++;
+      }
+      html += ordered ? "</ol>" : "</ul>"; continue;
+    }
+    const h = line.match(/^(#{1,4})\s+(.*)/);
+    if (h) { html += `<h${h[1].length > 2 ? 4 : 3}>${inline(h[2])}</h${h[1].length > 2 ? 4 : 3}>`; i++; continue; }
+    if (!line.trim()) { i++; continue; }
+    let para = [];
+    while (i < lines.length && lines[i].trim() && !/^\s*([-*]|\d+\.)\s+|^#{1,4}\s|^\s*\|/.test(lines[i])) para.push(lines[i++]);
+    if (!para.length) para.push(lines[i++]);
+    html += "<p>" + para.map(inline).join("<br>") + "</p>";
+  }
+  return html;
+}
+
+// --- dashboard ---
+async function loadDashboard() {
+  try {
+    const [h, d] = await Promise.all([fetch("/api/health").then((r) => r.json()), fetch("/api/dashboard").then((r) => r.json())]);
+    $("meta").innerHTML = `${esc(h.database)} · ${esc(h.model)} · ${h.tools} tools` +
+      (h.api_key_configured ? "" : ' · <span class="pill warn">no API key</span>');
+    const op = d.open_pipeline;
+    $("kpis").innerHTML = [
+      [fmt$(op.total_amount), `${op.count} open deals`], [fmt$(op.weighted_amount), "weighted"],
+      [d.win_rate != null ? Math.round(d.win_rate * 100) + "%" : "–", "win rate"],
+      [d.overdue_tasks, "overdue tasks"],
+    ].map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join("");
+    const max = Math.max(...d.by_stage.map((g) => g.total_amount), 1);
+    $("stages").innerHTML = d.by_stage.map((g) => `<div class="bar-row"><span>${esc(g.group)}</span>
+      <div class="bar" style="width:${(g.total_amount / max) * 100}%"></div><span class="v">${fmt$(g.total_amount / 1000)}k</span></div>`).join("");
+    $("closing").innerHTML = d.closing_30d.map((o) => `<li><span>${esc(o.account)} <span class="sub">${o.id} · ${esc(o.stage)}</span></span><span>${fmt$(o.amount)}</span></li>`).join("") || '<li class="sub">None</li>';
+    $("risk").innerHTML = d.at_risk_customers.map((a) => `<li><span>${esc(a.name)} <span class="sub">${a.id}</span></span><span>health ${a.health_score}</span></li>`).join("") || '<li class="sub">None</li>';
+  } catch (e) { $("meta").textContent = "Could not load dashboard: " + e; }
+}
+
+function renderSuggestions() {
+  $("suggestions").innerHTML = SUGGESTIONS.map((s) => `<button type="button">${esc(s)}</button>`).join("");
+  $("suggestions").querySelectorAll("button").forEach((b) => b.onclick = () => send(b.textContent));
+}
+
+function addUser(text) {
+  const el = document.createElement("div");
+  el.className = "msg user"; el.innerHTML = `<div class="bubble">${esc(text)}</div>`;
+  $("chat").appendChild(el);
+}
+
+function addAssistant() {
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  el.innerHTML = `<details class="trace"><summary>Working…</summary><div class="steps"></div></details>
+    <div class="bubble"><span class="typing">Thinking…</span></div>`;
+  $("chat").appendChild(el);
+  return el;
+}
+
+function scroll() { $("chat").scrollTop = $("chat").scrollHeight; }
+
+async function send(text) {
+  text = text.trim();
+  if (!text || busy) return;
+  busy = true; $("suggestions").style.display = "none";
+  addUser(text);
+  const el = addAssistant(), steps = el.querySelector(".steps"), bubble = el.querySelector(".bubble");
+  const summary = el.querySelector("summary");
+  let answer = "", nTools = 0, wrote = false;
+  scroll();
+  const addStep = (cls, html) => { const s = document.createElement("div"); s.className = "step " + cls; s.innerHTML = html; steps.appendChild(s); };
+
+  try {
+    const resp = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, session_id: sessionId, allow_writes: $("allowWrites").checked }),
+    });
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const ev = (chunk.match(/^event: (.*)$/m) || [])[1];
+        const data = JSON.parse((chunk.match(/^data: (.*)$/m) || [, "{}"])[1]);
+        if (ev === "session") sessionId = data.session_id;
+        else if (ev === "thinking") addStep("", "💭 " + esc(data.text.trim()));
+        else if (ev === "tool_call") {
+          nTools++; if (data.mutating) wrote = true;
+          summary.textContent = `Working… ${nTools} tool call${nTools > 1 ? "s" : ""}`;
+          addStep(data.mutating ? "write" : "tool", `🔧 <b>${esc(data.name)}</b>${data.mutating ? " (write)" : ""}<pre>${esc(JSON.stringify(data.input, null, 1))}</pre>`);
+        } else if (ev === "tool_result") {
+          const out = typeof data.output === "string" ? data.output : JSON.stringify(data.output, null, 1);
+          addStep(data.is_error ? "err" : "", `↳ ${esc(data.name)} · ${data.duration_ms} ms<pre>${esc(out.slice(0, 4000))}</pre>`);
+        } else if (ev === "text") { answer += (answer ? "\n\n" : "") + data.text; bubble.innerHTML = md(answer); }
+        else if (ev === "notice") addStep("", `<span class="notice">ℹ ${esc(data.text)}</span>`);
+        else if (ev === "error") { bubble.innerHTML = `<span class="error">✖ ${esc(data.text)}</span>`; answer = "error"; }
+        else if (ev === "done") {
+          summary.textContent = nTools ? `Used ${nTools} tool call${nTools > 1 ? "s" : ""}` : "No tools needed";
+          if (!answer) bubble.innerHTML = '<span class="sub">(no answer)</span>';
+        }
+        scroll();
+      }
+    }
+  } catch (e) {
+    bubble.innerHTML = `<span class="error">✖ ${esc(e)}</span>`;
+  }
+  busy = false;
+  if (wrote) loadDashboard();
+}
+
+$("form").onsubmit = (e) => { e.preventDefault(); const t = $("input").value; $("input").value = ""; send(t); };
+$("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } });
+$("resetBtn").onclick = async () => {
+  if (sessionId) await fetch("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId }) });
+  sessionId = null; $("chat").innerHTML = '<div class="suggestions" id="suggestions"></div>'; renderSuggestions();
+};
+renderSuggestions(); loadDashboard();
+</script>
+</body>
+</html>
