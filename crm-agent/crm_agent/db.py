@@ -1,8 +1,10 @@
 """Step 1 - The NoSQL database.
 
-The CRM lives in a MongoDB document database with six collections:
+The CRM lives in a MongoDB document database with these collections:
 
-    accounts, contacts, opportunities, leads, interactions, tasks
+    accounts, contacts, opportunities, leads, interactions, tasks   - CRM records
+    deal_history                                                    - past deal outcomes (decision-model training data)
+    decisions                                                       - audit log of decisions the model made
 
 Two backends share the exact same pymongo API:
 
@@ -20,7 +22,8 @@ from bson import json_util
 
 from .config import settings
 
-COLLECTIONS = ("accounts", "contacts", "opportunities", "leads", "interactions", "tasks")
+COLLECTIONS = ("accounts", "contacts", "opportunities", "leads", "interactions", "tasks",
+               "deal_history", "decisions")
 
 # Secondary indexes - the access paths the agent's tools rely on.
 INDEXES = {
@@ -30,6 +33,7 @@ INDEXES = {
     "leads": ["status", "source", "owner", "score"],
     "interactions": ["account_id", "contact_id", "opportunity_id", "lead_id", "timestamp"],
     "tasks": ["status", "owner", "due_date", "account_id"],
+    "decisions": ["opportunity_id", "timestamp"],
 }
 
 _lock = threading.Lock()

@@ -3,8 +3,9 @@
 An end-to-end system with three layers:
 
 1. **A NoSQL CRM database** (MongoDB document model) with realistic dummy data: accounts, contacts, opportunities, leads, interactions and tasks.
-2. **A tool-use framework**: 16 CRM tools (10 read, 6 write). Each tool has schema validation, an approval gate for writes and errors the model can recover from.
-3. **An agent** built on Claude that decides on each turn whether to query records, retrieve documents or notes (RAG), or write to the CRM. You can use it from a terminal or a web UI.
+2. **A tool-use framework**: 20 tools (CRM records, RAG search and the decision model). Each tool has schema validation, an approval gate for writes and errors the model can recover from.
+3. **A decision model**: a small machine-learning model trained on past deal outcomes. It scores every open deal, recommends an action, and approves, escalates or rejects discount requests. Its decisions are enforced in code, so the chatbot can explain them but cannot override them.
+4. **An agent** built on Claude that decides on each turn whether to query records, retrieve documents or notes (RAG), consult the decision model, or write to the CRM. You can use it from a terminal or a web UI.
 
 ```
  ┌──────────── Web UI (chat + live dashboard) ─────────┐   ┌─── Terminal CLI ───┐
@@ -17,20 +18,23 @@ An end-to-end system with three layers:
                                 ▼                                      ▼
             ┌────────── ToolRegistry (tools/registry.py) ──────────┐   │ ToolResult → tool_result
             │ JSON-schema validation · write approval · errors      │◄──┘
-            └──────┬────────────────────────────────┬──────────────┘
-                   ▼                                ▼
-     CRM tools (tools/crm_tools.py)       search_knowledge (RAG)
-     search_accounts, get_account_360,    ┌──── Retriever (rag/index.py) ────┐
-     list_opportunities, pipeline_summary,│ BM25 over knowledge-base markdown │
-     search_leads, get_interactions, ...  │ + every interaction note          │
-     log_interaction, update_opportunity, └───────────────┬──────────────────┘
-     create_task, convert_lead, ...                       │
-                   ▼                                      ▼
-        ┌────────────────── NoSQL DB (db.py) ──────────────────┐
-        │ MongoDB (MONGO_URI) or embedded mongomock + JSON file │
-        │ accounts · contacts · opportunities · leads ·         │
-        │ interactions · tasks                                  │
-        └───────────────────────────────────────────────────────┘
+            └──────┬────────────────────┬────────────────────┬─────┘
+                   ▼                    ▼                    ▼
+     CRM tools                search_knowledge (RAG)    Decision model tools
+     (tools/crm_tools.py)     ┌─ rag/index.py ──────┐   (tools/decision_tools.py)
+     search_accounts,         │ BM25 over policy    │   score_deal, prioritize_deals,
+     get_account_360,         │ docs + every        │   request_discount (enforced)
+     list_opportunities, ...  │ interaction note    │   ┌─ decision/ ───────────────┐
+     log_interaction,         └─────────┬───────────┘   │ features → logistic-      │
+     update_opportunity, ...            │               │ regression win model →    │
+                   │                    │               │ policy (action, discount) │
+                   │                    │               └─────────────┬─────────────┘
+                   ▼                    ▼                             ▼
+        ┌───────────────────────── NoSQL DB (db.py) ──────────────────────────┐
+        │ MongoDB (MONGO_URI) or embedded mongomock + JSON file                │
+        │ accounts · contacts · opportunities · leads · interactions · tasks · │
+        │ deal_history (model training data) · decisions (audit log)           │
+        └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick start
@@ -67,6 +71,9 @@ python -m crm_agent.seed --reset
 | "Which customers are at risk before renewal and why?" | Calls `search_accounts(renewal_within_days, max_health)`, then pulls interactions and the renewal policy |
 | "Show my top qualified leads and convert the best one" | Calls `search_leads`, then `convert_lead` (a write, so you approve it first) |
 | "Log a call with Acme: they want SSO via Okta, follow up next Friday" | Calls `log_interaction` and `create_task` (writes) |
+| "Which deals should I focus on this week?" | Calls `prioritize_deals(action="Intervene", sort_by="value_at_risk")` (decision model) |
+| "Request a 15% discount on OPP-029, budget is tight" | Calls `request_discount`; the model decides APPROVE / ESCALATE / REJECT and the app enforces it |
+| "How does the decision model work and how accurate is it?" | Calls `decision_model_info` (model card) |
 
 ## How it's built, step by step
 
@@ -83,6 +90,8 @@ The data is document-oriented. Each record is a JSON-like document, and document
 | `leads` | `_id` (LEAD-001), company, full_name, source, status, score, interest, owner, converted_account_id |
 | `interactions` | `_id` (INT-0001), type (Call/Email/Meeting/Demo/Support Ticket/Note), notes (free text), sentiment, timestamp, links to account/contact/opportunity/lead |
 | `tasks` | `_id` (TASK-001), subject, due_date, status, priority, owner, account_id / opportunity_id / lead_id |
+| `deal_history` | `_id` (HIST-0001), features{...}, outcome (Won/Lost): 600 past deals the decision model is trained on |
+| `decisions` | `_id` (DEC-0001), audit log of every discount decision: inputs, model version, decision, reason, effect |
 
 Secondary indexes are created on the fields the tools filter by. `connect()` returns a real `pymongo` database or a `mongomock` one. Both have the same API, so nothing above this layer cares which one it gets.
 
@@ -107,7 +116,33 @@ Tools accept either an account ID or an account name, and an ambiguous name retu
 
 | Read tools | Write tools (need approval) |
 |---|---|
-| `search_accounts`, `get_account_360`, `search_contacts`, `list_opportunities`, `get_opportunity`, `pipeline_summary`, `search_leads`, `get_interactions`, `list_tasks`, `search_knowledge` (RAG) | `log_interaction`, `update_opportunity`, `create_task`, `complete_task`, `update_lead`, `convert_lead` |
+| `search_accounts`, `get_account_360`, `search_contacts`, `list_opportunities`, `get_opportunity`, `pipeline_summary`, `search_leads`, `get_interactions`, `list_tasks`, `search_knowledge` (RAG), `score_deal`, `prioritize_deals`, `decision_model_info` (decision model) | `log_interaction`, `update_opportunity`, `create_task`, `complete_task`, `update_lead`, `convert_lead`, `request_discount` (decision model) |
+
+### Step 5c: The decision model (`crm_agent/decision/`, `crm_agent/tools/decision_tools.py`)
+This is a small, explainable model that acts as the **deciding factor** for deal judgments. It has three parts.
+
+**1. Features** (`decision/features.py`). Each open deal becomes 11 numbers computed from the database: sales stage, account health, existing customer or not, days since the last touchpoint, share of negative interactions in the last 90 days, competitor involved, close date passed, discount, deal size, executive engaged, and champion or project risk (phrases like "leaving the company" in notes). Past deals in `deal_history` are stored as the same 11 numbers plus Won or Lost.
+
+**2. Win-probability model** (`decision/model.py`). A logistic regression trained with numpy on 600 past deals in milliseconds at startup. On a 25% holdout it scores **AUC ≈ 0.77** and 70% accuracy, against 56% for always guessing the most common outcome. Every prediction breaks down into per-factor contributions such as "Last touchpoint: 45 days ago, hurts". These come with the playbook action for each top risk, so nothing is a black box. The model card is available through `decision_model_info` and `/api/model`.
+
+**3. Decision policy** (`decision/policy.py`) turns the probability into decisions. All thresholds are constants in one file.
+
+| Win probability | Action |
+|---|---|
+| ≥ 65% | **Accelerate**: focus on closing steps |
+| 40–65% | **Intervene**: act on the top risk factors now |
+| 20–40% | **Re-qualify**: re-validate pain, budget and decision process |
+| < 20% | **Deprioritize**: minimize effort |
+
+The policy decides discounts by combining the economics with the authority rules in the pricing policy:
+- **Economics:** expected revenue = win probability × net amount. A discount is only worth giving if the lift in win probability outweighs the lost revenue.
+- **REJECT** when the discount lowers expected revenue (typical for deals already likely to win), when the deal is below 20% win probability (price isn't the problem), or when the discount is above 30%. A counter-offer is suggested when a smaller discount would do better.
+- **APPROVE** when the discount is worth it and is ≤10% (account-executive authority). The discount is applied to the deal.
+- **ESCALATE** when it is worth it but is 10–30%. A high-priority approval task goes to the Regional Sales Director (≤20%) or to the VP of Sales + Deal Desk (≤30%). The deal stays unchanged.
+
+**How it is enforced:** `request_discount` is the only way to discount a deal. `update_opportunity` refuses to cut an amount by more than 10%, and every decision is written to the `decisions` audit collection. The system prompt tells Claude to present the model's numbers and decisions and never to make up its own probabilities. Claude still adds the "why" from notes and policies.
+
+The training history is synthetic: outcomes are drawn from a hidden formula in `seed.py` so the model has a real signal to learn. To use your own outcomes, fill `deal_history` with your past deals; the model retrains from whatever it finds there.
 
 ### Step 6: The agent (`crm_agent/agent.py`)
 The tool-use loop is written out by hand on the Claude Messages API:
@@ -137,7 +172,7 @@ API settings:
 ```bash
 pytest -q
 ```
-The 25 tests cover data integrity, retrieval quality, every tool (filters, validation, approval, writes), the server, and the **full agent loop** driven by a scripted fake Claude client. The fake client checks parallel tool results, error recovery, declined writes, refusal rollback and the step limit, all without an API key.
+The 32 tests cover data integrity, retrieval quality, every tool (filters, validation, approval, writes), the decision model (learning, explanations, policy rules, enforcement and audit), the server, and the **full agent loop** driven by a scripted fake Claude client. The fake client checks parallel tool results, error recovery, declined writes, refusal rollback and the step limit, all without an API key.
 
 ## Configuration
 
@@ -152,6 +187,7 @@ The 25 tests cover data integrity, retrieval quality, every tool (filters, valid
 | `CRM_SNAPSHOT` | `data/crm_snapshot.json` | Embedded-store persistence file |
 
 ## Extending it
+- **Tune decisions:** edit the thresholds and authority table in `decision/policy.py`, or add a feature in `decision/features.py` (and to `deal_history`).
 - **New tool:** add a decorated function in `tools/crm_tools.py`. It shows up in the agent, the CLI's `/tools` and `/api/tools` automatically.
 - **New knowledge:** drop a markdown file into `rag/knowledge/`.
 - **Better retrieval:** replace BM25 in `Retriever.search` with embeddings and a vector index (for example MongoDB Atlas Vector Search) without touching the tools.

@@ -5,7 +5,8 @@
 Endpoints
     GET  /                      chat UI with a live CRM dashboard
     GET  /api/health            backend + model info
-    GET  /api/dashboard         pipeline KPIs for the sidebar
+    GET  /api/dashboard         pipeline KPIs + decision-model summary for the sidebar
+    GET  /api/model             decision model card, thresholds and recent decisions
     GET  /api/records/{coll}    browse raw documents
     GET  /api/tools             tool catalog (name, description, schema, write flag)
     POST /api/tools/{name}      call a tool directly (no LLM)
@@ -27,7 +28,9 @@ from pydantic import BaseModel
 from . import db as dbmod
 from .agent import CRMAgent, build_context
 from .config import settings
+from .decision.model import get_model
 from .tools.crm_tools import OPEN_STAGES, pipeline_summary, registry
+from .tools.decision_tools import decision_model_info, prioritize_deals
 from .tools.registry import to_json
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -99,6 +102,7 @@ def dashboard():
         "at_risk_customers": [{"id": a["_id"], "name": a["name"], "health_score": a["health_score"],
                                "arr": a.get("arr")} for a in at_risk],
         "overdue_tasks": db.tasks.count_documents({"status": "Open", "due_date": {"$lt": today}}),
+        "decision_model": _decision_summary(ctx),
     }
 
 
@@ -108,6 +112,22 @@ def records(collection: str, limit: int = 50):
         raise HTTPException(404, f"unknown collection {collection}")
     docs = list(dbmod.get_db()[collection].find({}).limit(min(limit, 500)))
     return StreamingResponse(iter([to_json(docs)]), media_type="application/json")
+
+
+def _decision_summary(ctx) -> dict:
+    # Deals the model rates "Intervene" (winnable but at risk), biggest stake first - where action pays most.
+    ranked = prioritize_deals(ctx, action="Intervene", sort_by="value_at_risk", limit=6)
+    card = get_model(ctx.db).card
+    return {"forecast": ranked["model_forecast"]["expected_value"], "by_action": ranked["by_action"],
+            "holdout_auc": card["holdout_auc"], "training_deals": card["training_deals"],
+            "top_at_risk": [{"id": d["opportunity_id"], "account": d.get("account_name"), "amount": d["amount"],
+                             "win_probability": d["win_probability"], "action": d["action"]}
+                            for d in ranked["deals"]]}
+
+
+@app.get("/api/model")
+def model_card():
+    return StreamingResponse(iter([to_json(decision_model_info(build_context()))]), media_type="application/json")
 
 
 @app.get("/api/tools")

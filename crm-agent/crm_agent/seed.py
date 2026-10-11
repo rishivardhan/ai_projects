@@ -12,6 +12,7 @@ seed runs, so "closing this month" and "last 30 days" questions stay meaningful.
 from __future__ import annotations
 
 import argparse
+import math
 import random
 from datetime import datetime, timedelta
 
@@ -403,6 +404,44 @@ def generate(now: datetime | None = None, seed: int = SEED) -> dict[str, list[di
     return data
 
 
+# ---- deal history (training data for the decision model) ---------------------------------
+# Snapshots of past deals taken mid-cycle, with their eventual outcome. Outcomes are drawn
+# from a hidden "ground truth" so the decision model has a real signal to learn - the model
+# never sees these weights, only the features and the Won/Lost label.
+_TRUE_WEIGHTS = {
+    "stage_progress": 2.4, "health": 1.6, "is_customer": 0.5, "days_since_touch": -0.9,
+    "negative_ratio": -2.2, "competitor": -0.6, "past_due": -0.9, "discount": 3.5,
+    "log_size": -0.35, "exec_engaged": 0.8, "champion_risk": -1.4,
+}
+_TRUE_BIAS = -1.6
+
+
+def generate_deal_history(n: int = 600, seed: int = SEED + 1) -> list[dict]:
+    rng = random.Random(seed)
+    docs = []
+    for i in range(1, n + 1):
+        is_customer = 1 if rng.random() < 0.4 else 0
+        amount = round(math.exp(rng.gauss(math.log(60000), 0.7)), -2)
+        f = {
+            "stage_progress": rng.choice([0, 1 / 3, 2 / 3, 1]),
+            "health": min(1.0, max(0.2, rng.gauss(0.68, 0.15))) if is_customer else 0.5,
+            "is_customer": is_customer,
+            "days_since_touch": min(3.0, rng.expovariate(1 / 0.6)),
+            "negative_ratio": rng.betavariate(1.5, 4),
+            "competitor": 1 if rng.random() < 0.5 else 0,
+            "past_due": 1 if rng.random() < 0.15 else 0,
+            "discount": rng.choice([0, 0, 0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]),
+            "log_size": math.log(amount / 50000),
+            "exec_engaged": 1 if rng.random() < 0.5 else 0,
+            "champion_risk": 1 if rng.random() < 0.12 else 0,
+        }
+        logit = _TRUE_BIAS + sum(_TRUE_WEIGHTS[k] * v for k, v in f.items())
+        won = rng.random() < 1 / (1 + math.exp(-logit))
+        docs.append({"_id": f"HIST-{i:04d}", "amount": amount, "features": {k: round(v, 4) for k, v in f.items()},
+                     "outcome": "Won" if won else "Lost"})
+    return docs
+
+
 def seed_database(db, *, reset: bool = False, now: datetime | None = None) -> dict[str, int]:
     from .db import COLLECTIONS
 
@@ -410,6 +449,7 @@ def seed_database(db, *, reset: bool = False, now: datetime | None = None) -> di
         for coll in COLLECTIONS:
             db[coll].delete_many({})
     data = generate(now=now)
+    data["deal_history"] = generate_deal_history()
     for coll, docs in data.items():
         if docs:
             db[coll].insert_many(docs)

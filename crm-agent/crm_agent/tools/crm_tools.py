@@ -569,6 +569,10 @@ def update_opportunity(ctx: ToolContext, opportunity_id, stage=None, amount=None
     if amount is not None:
         if amount < 0:
             raise ValueError("amount must be positive")
+        if amount < opp["amount"] * 0.9:
+            # Price cuts are decisions for the decision model - they can't be made by editing the amount.
+            raise ValueError("cutting the amount by more than 10% is a discount; use request_discount so the "
+                             "decision model can approve, escalate or reject it")
         changes["amount"] = amount
     if close_date:
         changes["close_date"] = _parse_date(close_date, "close_date")
@@ -722,3 +726,7 @@ def convert_lead(ctx: ToolContext, lead_id, products=None, amount=None, close_da
     ctx.retriever.rebuild()  # re-index the lead's interactions under the new account
     return {"account": _pick(account, ACCOUNT_FIELDS), "contact": _pick(contact, CONTACT_FIELDS),
             "opportunity": _pick(opp, OPP_FIELDS)}
+
+
+# Decision-model tools register themselves on the same registry.
+from . import decision_tools  # noqa: E402,F401

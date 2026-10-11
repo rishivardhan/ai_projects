@@ -10,7 +10,9 @@
 The loop is written out by hand (rather than using the SDK's beta tool runner) so
 every step can be streamed to the UI as an ``AgentEvent`` and so writes can be
 gated. RAG is "as needed": retrieval is just another tool (``search_knowledge``),
-so Claude only retrieves when the question calls for documents or notes.
+so Claude only retrieves when the question calls for documents or notes. Deal
+judgments come from the decision model tools (``score_deal``, ``prioritize_deals``,
+``request_discount``), which the system prompt makes authoritative.
 """
 from __future__ import annotations
 
@@ -39,6 +41,12 @@ How to work:
 - Call several independent tools in parallel when you can.
 - Refer to records by name and ID (e.g. "Globex Financial (ACC-002)", "OPP-014"). When you rely on the
   knowledge base, name the document section you used.
+- A trained decision model is the deciding factor for deal judgments. For a deal's likelihood to
+  close, risk, prioritization or what to focus on, call score_deal or prioritize_deals and present the
+  model's win probability, action and factors - never estimate probabilities yourself, and don't
+  contradict its decision (you may add context from notes or policy). Discounts can only be granted via
+  request_discount, whose APPROVE / ESCALATE / REJECT outcome is final; relay it with its reason and any
+  counter-offer. The CRM "probability" field is just the stage default, not the model's estimate.
 - Write actions (logging interactions, updating deals or leads, creating/completing tasks, converting
   leads) change shared data. Only perform them when the user asked for that change or clearly agreed to
   your proposal. The application asks the user to approve each write; if one is declined, don't retry it.

@@ -1,4 +1,5 @@
 anthropic>=1.13.0
+numpy>=1.26
 pymongo>=4.8
 mongomock>=4.3
 fastapi>=0.115

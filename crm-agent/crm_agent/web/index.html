@@ -60,6 +60,16 @@ details.trace summary { cursor: pointer; user-select: none; }
 .step.write { border-color: var(--warn); }
 .step.err { border-color: var(--err); color: var(--err); }
 .step pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow: auto; background: var(--code); padding: 6px 8px; border-radius: 6px; color: var(--text); }
+.actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 6px; }
+.act { border-radius: 8px; padding: 6px; text-align: center; font-size: 11px; color: var(--muted); border: 1px solid var(--border); }
+.act b { display: block; font-size: 16px; color: var(--text); }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 999px; margin-left: 4px; }
+.b-Accelerate { background: #e3f4ea; color: #1a7f4b; } .b-Intervene { background: #fef0e6; color: #b54708; }
+.b-Re-qualify { background: #fde8e7; color: #c0362c; } .b-Deprioritize { background: var(--code); color: var(--muted); }
+@media (prefers-color-scheme: dark) {
+  .b-Accelerate { background: #173a28; color: #4ac286; } .b-Intervene { background: #3a2a1c; color: #f5a35c; }
+  .b-Re-qualify { background: #3d1f1d; color: #ff7b72; }
+}
 .notice { color: var(--warn); font-size: 13px; }
 .error { color: var(--err); }
 .typing { color: var(--muted); font-size: 13px; }
@@ -84,6 +94,9 @@ form button[type=submit] { background: var(--accent); color: #fff; border-color:
     <div class="sub" id="meta">connecting…</div>
     <h2>Open pipeline</h2>
     <div class="kpis" id="kpis"></div>
+    <h2>Decision model <span class="sub" id="modelMeta"></span></h2>
+    <div id="actions" class="actions"></div>
+    <ul class="list" id="decisions"></ul>
     <h2>Pipeline by stage</h2>
     <div id="stages"></div>
     <h2>Closing in 30 days</h2>
@@ -126,6 +139,9 @@ const SUGGESTIONS = [
   "Globex wants 25% off a 2-year deal. Who needs to approve that?",
   "Show my top qualified leads and suggest which to convert",
   "Which open deals are past due or stalled for 21+ days?",
+  "Which deals should I focus on this week according to the decision model?",
+  "Request a 15% discount on OPP-029 - the customer says budget is tight",
+  "How does the decision model work and how accurate is it?",
 ];
 
 // --- tiny markdown renderer (headings, bold, italics, code, lists, tables) ---
@@ -182,6 +198,13 @@ async function loadDashboard() {
     const max = Math.max(...d.by_stage.map((g) => g.total_amount), 1);
     $("stages").innerHTML = d.by_stage.map((g) => `<div class="bar-row"><span>${esc(g.group)}</span>
       <div class="bar" style="width:${(g.total_amount / max) * 100}%"></div><span class="v">${fmt$(g.total_amount / 1000)}k</span></div>`).join("");
+    const dm = d.decision_model;
+    $("modelMeta").textContent = `· AUC ${dm.holdout_auc} · ${dm.training_deals} past deals`;
+    $("actions").innerHTML = ["Accelerate", "Intervene", "Re-qualify", "Deprioritize"].map((a) =>
+      `<div class="act"><b>${(dm.by_action[a] || {}).deals || 0}</b>${a}</div>`).join("");
+    $("decisions").innerHTML = `<li><span class="sub">Model forecast (expected value)</span><span>${fmt$(dm.forecast)}</span></li>` +
+      `<li><span class="sub">Act now: winnable but at risk</span><span class="sub">win % · amount</span></li>` +
+      dm.top_at_risk.map((o) => `<li><span>${esc(o.account)} <span class="sub">${o.id}</span><span class="badge b-${o.action}">${o.action}</span></span><span>${Math.round(o.win_probability * 100)}% · ${fmt$(o.amount)}</span></li>`).join("");
     $("closing").innerHTML = d.closing_30d.map((o) => `<li><span>${esc(o.account)} <span class="sub">${o.id} · ${esc(o.stage)}</span></span><span>${fmt$(o.amount)}</span></li>`).join("") || '<li class="sub">None</li>';
     $("risk").innerHTML = d.at_risk_customers.map((a) => `<li><span>${esc(a.name)} <span class="sub">${a.id}</span></span><span>health ${a.health_score}</span></li>`).join("") || '<li class="sub">None</li>';
   } catch (e) { $("meta").textContent = "Could not load dashboard: " + e; }
