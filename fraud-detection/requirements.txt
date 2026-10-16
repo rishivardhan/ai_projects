@@ -1,5 +1,5 @@
 scikit-learn>=1.4
-pandas>=2.1
+pandas>=2.2
 numpy>=1.26
 SQLAlchemy>=2.0
 psycopg[binary]>=3.1
