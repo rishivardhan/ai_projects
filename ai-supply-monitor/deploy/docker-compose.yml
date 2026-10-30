@@ -1,0 +1,47 @@
+# App + Postgres/Timescale. Ollama keeps running on the host (M2) and is reached at host.docker.internal:11434.
+# Memory caps on both containers leave Ollama its share of the machine.
+name: ai-supply-monitor
+
+services:
+  postgres:
+    image: timescale/timescaledb:2.30.2-pg16
+    environment:
+      POSTGRES_DB: aimonitor
+      POSTGRES_USER: aimonitor
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-aimonitor}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aimonitor -d aimonitor"]
+      interval: 5s
+      retries: 20
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/aimonitor
+      DB_USER: aimonitor
+      DB_PASSWORD: ${DB_PASSWORD:-aimonitor}
+      IMPORT_DIR: /import
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+    volumes:
+      - ./import:/import:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    mem_limit: 768m
+
+volumes:
+  pgdata:
