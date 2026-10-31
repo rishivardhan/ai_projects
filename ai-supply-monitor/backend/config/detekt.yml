@@ -1,0 +1,16 @@
+# Overrides on top of detekt's default rule set.
+style:
+  ThrowsCount:
+    max: 3  # controllers validate path, query and lookup up front
+  MaxLineLength:
+    maxLineLength: 140  # matches .editorconfig
+  MagicNumber:
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    excludes: ['**/test/**']
+  ReturnCount:
+    max: 3
+    excludeGuardClauses: true
+performance:
+  SpreadOperator:
+    active: false  # only hit by runApplication(*args)

@@ -1,0 +1,49 @@
+name: ai-supply-monitor
+
+on:
+  push:
+    paths:
+      - "ai-supply-monitor/**"
+      - ".github/workflows/ai-supply-monitor.yml"
+  pull_request:
+    paths:
+      - "ai-supply-monitor/**"
+      - ".github/workflows/ai-supply-monitor.yml"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-supply-monitor/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      # Modulith verify (ModularityTests), unit tests, Testcontainers tests against Timescale, detekt, ktlint.
+      - run: ./gradlew check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-reports
+          path: |
+            ai-supply-monitor/backend/build/reports/
+            ai-supply-monitor/backend/build/spring-modulith-docs/
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-supply-monitor/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ai-supply-monitor/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build

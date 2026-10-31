@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: ai-supply-monitor
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/aimonitor}
+    username: ${DB_USER:aimonitor}
+    password: ${DB_PASSWORD:aimonitor}
+  flyway:
+    locations:
+      - classpath:db/migration/common
+      - classpath:db/migration/reference
+      - classpath:db/migration/ingestion
+      - classpath:db/migration/marketdata
+  modulith:
+    events:
+      jdbc:
+        schema-initialization:
+          enabled: true
+      # Unfinished event publications are replayed on restart.
+      republish-outstanding-events-on-restart: true
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, modulith
+
+aimonitor:
+  ingestion:
+    # Directory of DETR-posttrade-*.json.gz files to import on startup (empty = none).
+    import-dir: ${IMPORT_DIR:}
+    deutsche-boerse:
+      enabled: ${DEUTSCHE_BOERSE_ENABLED:false}
+      feeds:
+        "[DETR-posttrade]": XETR
